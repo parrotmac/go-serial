@@ -139,6 +139,16 @@ func (p *serialPort) Read(buf []byte) (int, error) {
 	return getOverlappedResult(p.fd, p.ro)
 }
 
+const PURGE_RXCLEAR = 0x8
+
+func (s *serialPort) Flush() error {
+	r, _, err := syscall.Syscall(nPurgeComm, 2, uintptr(s.fd), uintptr(PURGE_RXCLEAR), 0)
+	if r == 0 {
+		return err
+	}
+	return nil
+}
+
 func (s *serialPort) SetBaudRate(baudRate uint) error {
 	var params structDCB
 	params.DCBlength = uint32(unsafe.Sizeof(params))
@@ -198,6 +208,7 @@ var (
 	nGetCommState,
 	nGetOverlappedResult,
 	nEscapeCommFunction,
+	nPurgeComm,
 	nCreateEvent,
 	nResetEvent uintptr
 )
@@ -215,6 +226,7 @@ func init() {
 	nSetCommMask = getProcAddr(k32, "SetCommMask")
 	nSetupComm = getProcAddr(k32, "SetupComm")
 	nEscapeCommFunction = getProcAddr(k32, "EscapeCommFunction")
+	nPurgeComm = getProcAddr(k32, "PurgeComm")
 	nGetOverlappedResult = getProcAddr(k32, "GetOverlappedResult")
 	nCreateEvent = getProcAddr(k32, "CreateEventW")
 	nResetEvent = getProcAddr(k32, "ResetEvent")

@@ -67,6 +67,8 @@ const (
 	kIOSSIOSPEED = 0x80045402
 
 	kDefaultBaudRate = 115200
+
+	kFREAD = 0x01
 )
 
 // sys/termios.h
@@ -80,8 +82,8 @@ type termios struct {
 	c_ospeed speed_t
 }
 
-func ioctl(fd, request uintptr, argp unsafe.Pointer) error {
-	r1, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, uintptr(argp))
+func ioctl(fd, request, arg uintptr) error {
+	r1, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, arg)
 
 	// Did the syscall return an error?
 	if errno != 0 {
@@ -98,7 +100,7 @@ func ioctl(fd, request uintptr, argp unsafe.Pointer) error {
 
 func getTermios(fd uintptr) (*termios, error) {
 	var t termios
-	err := ioctl(fd, kTIOCGETA, unsafe.Pointer(&t))
+	err := ioctlp(fd, kTIOCGETA, unsafe.Pointer(&t))
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,7 @@ func getTermios(fd uintptr) (*termios, error) {
 // descriptor. This sets appropriate options for how the OS interacts with the
 // port.
 func setTermios(fd uintptr, src *termios) error {
-	return ioctl(fd, kTIOCSETA, unsafe.Pointer(src))
+	return ioctlp(fd, kTIOCSETA, unsafe.Pointer(src))
 }
 
 func convertOptions(options OpenOptions) (*termios, error) {
@@ -185,7 +187,7 @@ func convertOptions(options OpenOptions) (*termios, error) {
 
 // Set baud rate with the IOSSIOSPEED ioctl, to support non-standard speeds.
 func setBaudRate(fd uintptr, baudRate uint) error {
-	return ioctl(fd, kIOSSIOSPEED, unsafe.Pointer(&baudRate))
+	return ioctlp(fd, kIOSSIOSPEED, unsafe.Pointer(&baudRate))
 }
 
 type serialPort struct {
@@ -251,6 +253,11 @@ func (s *serialPort) Write(buf []byte) (int, error) {
 
 func (s *serialPort) Close() error {
 	return s.file.Close()
+}
+
+func (s *serialPort) Flush() error {
+	f := kFREAD
+	return ioctlp(s.file.Fd(), syscall.TIOCFLUSH, unsafe.Pointer(&f))
 }
 
 func (s *serialPort) SetBaudRate(baudRate uint) error {

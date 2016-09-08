@@ -32,7 +32,7 @@ func (s *serialPort) setModemControl(bits uintptr, active bool) error {
 	case false:
 		call = syscall.TIOCMBIC
 	}
-	return ioctl(s.file.Fd(), call, unsafe.Pointer(&bits))
+	return ioctlp(s.file.Fd(), call, unsafe.Pointer(&bits))
 }
 
 func (s *serialPort) SetRTS(active bool) error {
@@ -57,4 +57,8 @@ func timeoutSettings(ict time.Duration, mrs uint) (cc_t, cc_t, error) {
 		return 0, 0, errors.New("invalid value for InterCharacterTimeout")
 	}
 	return cc_t(vtime), cc_t(vmin), nil
+}
+
+func ioctlp(fd, request uintptr, argp unsafe.Pointer) error {
+	return ioctl(fd, request, uintptr(argp))
 }

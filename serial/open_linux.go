@@ -24,11 +24,13 @@ import (
 // }
 //
 const (
-	kTCGETS2 = 0x802C542A
-	kTCSETS2 = 0x402C542B
-	kCBAUD   = 0x100f
-	kBOTHER  = 0x1000
-	kNCCS    = 19
+	kTCGETS2  = 0x802C542A
+	kTCSETS2  = 0x402C542B
+	kCBAUD    = 0x100f
+	kBOTHER   = 0x1000
+	kNCCS     = 19
+	kTCFLSH   = 0x540b
+	kTCIFLUSH = 0
 )
 
 //
@@ -131,8 +133,8 @@ func makeTermios2(options OpenOptions) (*termios2, error) {
 	return t2, nil
 }
 
-func ioctl(fd, request uintptr, argp unsafe.Pointer) error {
-	r, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd, request, uintptr(argp), 0, 0, 0)
+func ioctl(fd, request, arg uintptr) error {
+	r, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd, request, arg, 0, 0, 0)
 	if errno != 0 {
 		return os.NewSyscallError("SYS_IOCTL", errno)
 	}
@@ -164,7 +166,7 @@ func openInternal(options OpenOptions) (Serial, error) {
 		return nil, optErr
 	}
 
-	err := ioctl(uintptr(file.Fd()), kTCSETS2, unsafe.Pointer(t2))
+	err := ioctlp(uintptr(file.Fd()), kTCSETS2, unsafe.Pointer(t2))
 	if err != nil {
 		return nil, err
 	}
@@ -215,16 +217,20 @@ func (s *serialPort) Close() error {
 	return s.file.Close()
 }
 
+func (s *serialPort) Flush() error {
+	return ioctl(s.file.Fd(), kTCFLSH, kTCIFLUSH)
+}
+
 func (s *serialPort) SetBaudRate(baudRate uint) error {
 	var t2 termios2
-	err := ioctl(uintptr(s.file.Fd()), kTCGETS2, unsafe.Pointer(&t2))
+	err := ioctlp(uintptr(s.file.Fd()), kTCGETS2, unsafe.Pointer(&t2))
 	if err != nil {
 		return err
 	}
 	t2.c_cflag = ((t2.c_cflag &^ kCBAUD) | kBOTHER)
 	t2.c_ispeed = speed_t(baudRate)
 	t2.c_ospeed = speed_t(baudRate)
-	err = ioctl(uintptr(s.file.Fd()), kTCSETS2, unsafe.Pointer(&t2))
+	err = ioctlp(uintptr(s.file.Fd()), kTCSETS2, unsafe.Pointer(&t2))
 	if err != nil {
 		return err
 	}
@@ -238,13 +244,13 @@ func (s *serialPort) SetReadTimeout(timeout time.Duration) error {
 	}
 
 	var t2 termios2
-	err = ioctl(uintptr(s.file.Fd()), kTCGETS2, unsafe.Pointer(&t2))
+	err = ioctlp(uintptr(s.file.Fd()), kTCGETS2, unsafe.Pointer(&t2))
 	if err != nil {
 		return err
 	}
 	t2.c_cc[syscall.VTIME] = vtime
 	t2.c_cc[syscall.VMIN] = vmin
-	err = ioctl(uintptr(s.file.Fd()), kTCSETS2, unsafe.Pointer(&t2))
+	err = ioctlp(uintptr(s.file.Fd()), kTCSETS2, unsafe.Pointer(&t2))
 	if err != nil {
 		return err
 	}
