@@ -27,7 +27,7 @@ package serial
 
 import (
 	"errors"
-	"io"
+	"time"
 )
 import "os"
 import "syscall"
@@ -65,6 +65,8 @@ const (
 
 	// IOKit: serial/ioss.h
 	kIOSSIOSPEED = 0x80045402
+
+	kDefaultBaudRate = 115200
 )
 
 // sys/termios.h
@@ -78,17 +80,8 @@ type termios struct {
 	c_ospeed speed_t
 }
 
-// setTermios updates the termios struct associated with a serial port file
-// descriptor. This sets appropriate options for how the OS interacts with the
-// port.
-func setTermios(fd uintptr, src *termios) error {
-	// Make the ioctl syscall that sets the termios struct.
-	r1, _, errno :=
-		syscall.Syscall(
-			syscall.SYS_IOCTL,
-			fd,
-			uintptr(kTIOCSETA),
-			uintptr(unsafe.Pointer(src)))
+func ioctl(fd, request uintptr, argp unsafe.Pointer) error {
+	r1, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, uintptr(argp))
 
 	// Did the syscall return an error?
 	if errno != 0 {
@@ -101,6 +94,22 @@ func setTermios(fd uintptr, src *termios) error {
 	}
 
 	return nil
+}
+
+func getTermios(fd uintptr) (*termios, error) {
+	var t termios
+	err := ioctl(fd, kTIOCGETA, unsafe.Pointer(&t))
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// setTermios updates the termios struct associated with a serial port file
+// descriptor. This sets appropriate options for how the OS interacts with the
+// port.
+func setTermios(fd uintptr, src *termios) error {
+	return ioctl(fd, kTIOCSETA, unsafe.Pointer(src))
 }
 
 func convertOptions(options OpenOptions) (*termios, error) {
@@ -116,25 +125,17 @@ func convertOptions(options OpenOptions) (*termios, error) {
 	// seems to imply that it shouldn't really exist.
 	result.c_cflag |= kCREAD
 
-	// Sanity check inter-character timeout and minimum read size options.
-	vtime := uint(round(float64(options.InterCharacterTimeout)/100.0) * 100)
-	vmin := options.MinimumReadSize
-
-	if vmin == 0 && vtime < 100 {
-		return nil, errors.New("Invalid values for InterCharacterTimeout and MinimumReadSize.")
+	vtime, vmin, err := timeoutSettings(time.Duration(options.InterCharacterTimeout)*time.Millisecond, options.MinimumReadSize)
+	if err != nil {
+		return nil, err
 	}
 
-	if vtime > 25500 {
-		return nil, errors.New("Invalid value for InterCharacterTimeout.")
-	}
-
-	// Set VMIN and VTIME. Make sure to convert to tenths of seconds for VTIME.
-	result.c_cc[kVTIME] = cc_t(vtime / 100)
-	result.c_cc[kVMIN] = cc_t(vmin)
+	result.c_cc[kVTIME] = vtime
+	result.c_cc[kVMIN] = vmin
 
 	// Set an arbitrary baudrate. We'll set the real one later.
-	result.c_ispeed = 14400
-	result.c_ospeed = 14400
+	result.c_ispeed = kDefaultBaudRate
+	result.c_ospeed = kDefaultBaudRate
 
 	// Data bits
 	switch options.DataBits {
@@ -182,7 +183,17 @@ func convertOptions(options OpenOptions) (*termios, error) {
 	return &result, nil
 }
 
-func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
+// Set baud rate with the IOSSIOSPEED ioctl, to support non-standard speeds.
+func setBaudRate(fd uintptr, baudRate uint) error {
+	return ioctl(fd, kIOSSIOSPEED, unsafe.Pointer(&baudRate))
+}
+
+type serialPort struct {
+	file     *os.File
+	baudRate uint
+}
+
+func openInternal(options OpenOptions) (Serial, error) {
 	// Open the serial port in non-blocking mode, since otherwise the OS will
 	// wait for the CARRIER line to be asserted.
 	file, err :=
@@ -222,21 +233,56 @@ func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
 		return nil, err
 	}
 
-	// Set baud rate with the IOSSIOSPEED ioctl, to support non-standard speeds.
-	r2, _, errno2 := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		uintptr(file.Fd()),
-		uintptr(kIOSSIOSPEED),
-		uintptr(unsafe.Pointer(&options.BaudRate)));
-
-	if errno2 != 0 {
-		return nil, os.NewSyscallError("SYS_IOCTL", errno2)
-	}
-
-	if r2 != 0 {
-		return nil, errors.New("Unknown error from SYS_IOCTL.")
+	if err := setBaudRate(file.Fd(), options.BaudRate); err != nil {
+		return nil, err
 	}
 
 	// We're done.
-	return file, nil
+	return &serialPort{file: file, baudRate: options.BaudRate}, nil
+}
+
+func (s *serialPort) Read(buf []byte) (int, error) {
+	return s.file.Read(buf)
+}
+
+func (s *serialPort) Write(buf []byte) (int, error) {
+	return s.file.Write(buf)
+}
+
+func (s *serialPort) Close() error {
+	return s.file.Close()
+}
+
+func (s *serialPort) SetBaudRate(baudRate uint) error {
+	err := setBaudRate(s.file.Fd(), baudRate)
+	if err == nil {
+		s.baudRate = baudRate
+	}
+	return err
+}
+
+func (s *serialPort) SetReadTimeout(timeout time.Duration) error {
+	vtime, vmin, err := timeoutSettings(timeout, 0)
+	if err != nil {
+		return err
+	}
+	t, err := getTermios(s.file.Fd())
+	if err != nil {
+		return err
+	}
+	t.c_cc[kVTIME] = vtime
+	t.c_cc[kVMIN] = vmin
+	// Non-standard baud rate is being used, setting will fail. We need to re-apply it separately.
+	// This will result in momentary change of baud rate, but there seems to be no way to do it transactionally.
+	setSpeed := false
+	if t.c_ispeed > 230400 {
+		t.c_ispeed = kDefaultBaudRate
+		t.c_ospeed = kDefaultBaudRate
+		setSpeed = true
+	}
+	err = setTermios(s.file.Fd(), t)
+	if setSpeed {
+		err = setBaudRate(s.file.Fd(), s.baudRate)
+	}
+	return err
 }

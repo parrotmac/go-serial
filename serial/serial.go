@@ -20,6 +20,7 @@ package serial
 import (
 	"io"
 	"math"
+	"time"
 )
 
 // Valid parity values.
@@ -89,16 +90,11 @@ type OpenOptions struct {
 	//     Calls to Read() return only when at least MinimumReadSize bytes are
 	//     available. The inter-character timer is not used.
 	//
-	// For windows usage, these options (termios) do not conform well to the
-	//     windows serial port / comms abstractions.  Please see the code in
-	//		 open_windows setCommTimeouts function for full documentation.
-	//   	 Summary:
-	//			Setting MinimumReadSize > 0 will cause the serialPort to block until
-	//			until data is available on the port.
-	//			Setting IntercharacterTimeout > 0 and MinimumReadSize == 0 will cause
-	//			the port to either wait until IntercharacterTimeout wait time is
-	//			exceeded OR there is character data to return from the port.
-	//
+	// On windows, the timeout magic just doesn't seem to work correctly.
+	// The modes are:
+	//   * ICT = MRS = 0: non-blocking mode, Read returns immediately if no bytes are ready.
+	//   * ICT = 0, MRS > 0: blocking mode, wait indefinitely for data to arrive.
+	//   * ICT > 0: Read waits up to ICT, returns as soon as at least one byte is available.
 
 	InterCharacterTimeout uint
 	MinimumReadSize       uint
@@ -122,8 +118,17 @@ type OpenOptions struct {
 	Rs485DelayRtsAfterSend int
 }
 
-// Open creates an io.ReadWriteCloser based on the supplied options struct.
-func Open(options OpenOptions) (io.ReadWriteCloser, error) {
+type Serial interface {
+	io.ReadWriteCloser
+
+	SetBaudRate(baudRate uint) error
+	SetReadTimeout(timeout time.Duration) error
+	SetRTS(active bool) error
+	SetDTR(active bool) error
+}
+
+// Open creates an Serial based on the supplied options struct.
+func Open(options OpenOptions) (Serial, error) {
 	// Redirect to the OS-specific function.
 	return openInternal(options)
 }

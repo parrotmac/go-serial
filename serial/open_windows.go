@@ -16,10 +16,10 @@ package serial
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -49,7 +49,7 @@ type structTimeouts struct {
 	WriteTotalTimeoutConstant   uint32
 }
 
-func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
+func openInternal(options OpenOptions) (Serial, error) {
 	if len(options.PortName) > 0 && options.PortName[0] != '\\' {
 		options.PortName = "\\\\.\\" + options.PortName
 	}
@@ -77,7 +77,7 @@ func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
 	if err = setupComm(h, 64, 64); err != nil {
 		return nil, err
 	}
-	if err = setCommTimeouts(h, options); err != nil {
+	if err = setCommTimeouts(h, time.Duration(options.InterCharacterTimeout)*time.Millisecond, options.MinimumReadSize); err != nil {
 		return nil, err
 	}
 	if err = setCommMask(h); err != nil {
@@ -139,12 +139,65 @@ func (p *serialPort) Read(buf []byte) (int, error) {
 	return getOverlappedResult(p.fd, p.ro)
 }
 
+func (s *serialPort) SetBaudRate(baudRate uint) error {
+	var params structDCB
+	params.DCBlength = uint32(unsafe.Sizeof(params))
+	r, _, err := syscall.Syscall(nGetCommState, 2, uintptr(s.fd), uintptr(unsafe.Pointer(&params)), 0)
+	if r == 0 {
+		return err
+	}
+	params.BaudRate = uint32(baudRate)
+	r, _, err = syscall.Syscall(nSetCommState, 2, uintptr(s.fd), uintptr(unsafe.Pointer(&params)), 0)
+	if r == 0 {
+		return err
+	}
+	return nil
+}
+
+func (s *serialPort) SetReadTimeout(timeout time.Duration) error {
+	return setCommTimeouts(s.fd, timeout, 0)
+}
+
+const (
+	// Function constants for EscapeCommFunction
+	kCLRDTR uint32 = 6
+	kCLRRTS        = 4
+	kSETDTR        = 5
+	kSETRTS        = 3
+)
+
+func (s *serialPort) escapeCommFunction(function uint32) error {
+	r, _, err := syscall.Syscall(nEscapeCommFunction, 2, uintptr(s.fd), uintptr(function), 0)
+	if r == 0 {
+		return err
+	}
+	return nil
+}
+
+func (s *serialPort) SetRTS(active bool) error {
+	if active {
+		return s.escapeCommFunction(kSETRTS)
+	} else {
+		return s.escapeCommFunction(kCLRRTS)
+	}
+}
+
+func (s *serialPort) SetDTR(active bool) error {
+	if active {
+		return s.escapeCommFunction(kSETDTR)
+	} else {
+		return s.escapeCommFunction(kCLRDTR)
+	}
+}
+
 var (
 	nSetCommState,
 	nSetCommTimeouts,
 	nSetCommMask,
 	nSetupComm,
+	nGetCommState,
 	nGetOverlappedResult,
+	nEscapeCommFunction,
 	nCreateEvent,
 	nResetEvent uintptr
 )
@@ -156,10 +209,12 @@ func init() {
 	}
 	defer syscall.FreeLibrary(k32)
 
+	nGetCommState = getProcAddr(k32, "GetCommState")
 	nSetCommState = getProcAddr(k32, "SetCommState")
 	nSetCommTimeouts = getProcAddr(k32, "SetCommTimeouts")
 	nSetCommMask = getProcAddr(k32, "SetCommMask")
 	nSetupComm = getProcAddr(k32, "SetupComm")
+	nEscapeCommFunction = getProcAddr(k32, "EscapeCommFunction")
 	nGetOverlappedResult = getProcAddr(k32, "GetOverlappedResult")
 	nCreateEvent = getProcAddr(k32, "CreateEventW")
 	nResetEvent = getProcAddr(k32, "ResetEvent")
@@ -201,65 +256,29 @@ func setCommState(h syscall.Handle, options OpenOptions) error {
 	return nil
 }
 
-func setCommTimeouts(h syscall.Handle, options OpenOptions) error {
-	var timeouts structTimeouts
+func setCommTimeouts(h syscall.Handle, ict time.Duration, mrs uint) error {
 	const MAXDWORD = 1<<32 - 1
-	timeoutConstant := uint32(round(float64(options.InterCharacterTimeout) / 100.0))
-	readIntervalTimeout := uint32(options.MinimumReadSize)
-
-	if timeoutConstant > 0 && readIntervalTimeout == 0 {
-		//Assume we're setting for non blocking IO.
+	var timeouts structTimeouts
+	// rojer: These timeout settings don't seem to work as described.
+	// The only reliable setting seems to be the constant, the inter-char magic with multiplers
+	// just doesn't seem to work.
+	// Luckily, we don't care about these finer details, so - whatever.
+	if ict > 0 {
+		intervalTimeoutMs := uint32(round(ict.Seconds() * 1000.0))
 		timeouts.ReadIntervalTimeout = MAXDWORD
 		timeouts.ReadTotalTimeoutMultiplier = MAXDWORD
-		timeouts.ReadTotalTimeoutConstant = timeoutConstant
-	} else if readIntervalTimeout > 0 {
-		// Assume we want to block and wait for input.
-		timeouts.ReadIntervalTimeout = readIntervalTimeout
-		timeouts.ReadTotalTimeoutMultiplier = 1
-		timeouts.ReadTotalTimeoutConstant = 1
+		timeouts.ReadTotalTimeoutConstant = intervalTimeoutMs
+	} else if mrs > 0 {
+		// Blocking mode.
+		timeouts.ReadIntervalTimeout = 0
+		timeouts.ReadTotalTimeoutMultiplier = 0
+		timeouts.ReadTotalTimeoutConstant = 0
 	} else {
-		// No idea what we intended, use defaults
-		// default config does what it did before.
+		// Non-blocking mode.
 		timeouts.ReadIntervalTimeout = MAXDWORD
-		timeouts.ReadTotalTimeoutMultiplier = MAXDWORD
-		timeouts.ReadTotalTimeoutConstant = MAXDWORD - 1
+		timeouts.ReadTotalTimeoutMultiplier = 0
+		timeouts.ReadTotalTimeoutConstant = 0
 	}
-
-	/*
-			Empirical testing has shown that to have non-blocking IO we need to set:
-				ReadTotalTimeoutConstant > 0 and
-				ReadTotalTimeoutMultiplier = MAXDWORD and
-				ReadIntervalTimeout = MAXDWORD
-
-				The documentation states that ReadIntervalTimeout is set in MS but
-				empirical investigation determines that it seems to interpret in units
-				of 100ms.
-
-				If InterCharacterTimeout is set at all it seems that the port will block
-				indefinitly until a character is received.  Not all circumstances have been
-				tested. The input of an expert would be appreciated.
-
-			From http://msdn.microsoft.com/en-us/library/aa363190(v=VS.85).aspx
-
-			 For blocking I/O see below:
-
-			 Remarks:
-
-			 If an application sets ReadIntervalTimeout and
-			 ReadTotalTimeoutMultiplier to MAXDWORD and sets
-			 ReadTotalTimeoutConstant to a value greater than zero and
-			 less than MAXDWORD, one of the following occurs when the
-			 ReadFile function is called:
-
-			 If there are any bytes in the input buffer, ReadFile returns
-			       immediately with the bytes in the buffer.
-
-			 If there are no bytes in the input buffer, ReadFile waits
-		               until a byte arrives and then returns immediately.
-
-			 If no bytes arrive within the time specified by
-			       ReadTotalTimeoutConstant, ReadFile times out.
-	*/
 
 	r, _, err := syscall.Syscall(nSetCommTimeouts, 2, uintptr(h), uintptr(unsafe.Pointer(&timeouts)), 0)
 	if r == 0 {
