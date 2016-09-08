@@ -121,6 +121,7 @@ type OpenOptions struct {
 type Serial interface {
 	io.ReadWriteCloser
 
+	Flush() error
 	SetBaudRate(baudRate uint) error
 	SetReadTimeout(timeout time.Duration) error
 	SetRTS(active bool) error
