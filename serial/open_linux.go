@@ -2,9 +2,9 @@ package serial
 
 import (
 	"errors"
-	"io"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -16,6 +16,7 @@ import (
 // #include <linux/termios.h>
 //
 // int main(int argc, const char **argv) {
+//   printf("TCGETS2 = 0x%08X\n", TCGETS2);
 //   printf("TCSETS2 = 0x%08X\n", TCSETS2);
 //   printf("BOTHER  = 0x%08X\n", BOTHER);
 //   printf("NCCS    = %d\n",     NCCS);
@@ -23,7 +24,9 @@ import (
 // }
 //
 const (
+	kTCGETS2 = 0x802C542A
 	kTCSETS2 = 0x402C542B
+	kCBAUD   = 0x100f
 	kBOTHER  = 0x1000
 	kNCCS    = 19
 )
@@ -63,6 +66,10 @@ type serial_rs485 struct {
 	padding               [5]uint32
 }
 
+type serialPort struct {
+	file *os.File
+}
+
 //
 // Returns a pointer to an instantiates termios2 struct, based on the given
 // OpenOptions. Termios2 is a Linux extension which allows arbitrary baud rates
@@ -70,22 +77,14 @@ type serial_rs485 struct {
 //
 func makeTermios2(options OpenOptions) (*termios2, error) {
 
-	// Sanity check inter-character timeout and minimum read size options.
-
-	vtime := uint(round(float64(options.InterCharacterTimeout)/100.0) * 100)
-	vmin := options.MinimumReadSize
-
-	if vmin == 0 && vtime < 100 {
-		return nil, errors.New("invalid values for InterCharacterTimeout and MinimumReadSize")
-	}
-
-	if vtime > 25500 {
-		return nil, errors.New("invalid value for InterCharacterTimeout")
+	vtime, vmin, err := timeoutSettings(time.Duration(options.InterCharacterTimeout)*time.Millisecond, options.MinimumReadSize)
+	if err != nil {
+		return nil, err
 	}
 
 	ccOpts := [kNCCS]cc_t{}
-	ccOpts[syscall.VTIME] = cc_t(vtime / 100)
-	ccOpts[syscall.VMIN] = cc_t(vmin)
+	ccOpts[syscall.VTIME] = vtime
+	ccOpts[syscall.VMIN] = vmin
 
 	t2 := &termios2{
 		c_cflag:  syscall.CLOCAL | syscall.CREAD | kBOTHER,
@@ -132,7 +131,18 @@ func makeTermios2(options OpenOptions) (*termios2, error) {
 	return t2, nil
 }
 
-func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
+func ioctl(fd, request uintptr, argp unsafe.Pointer) error {
+	r, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd, request, uintptr(argp), 0, 0, 0)
+	if errno != 0 {
+		return os.NewSyscallError("SYS_IOCTL", errno)
+	}
+	if r != 0 {
+		return errors.New("Unknown error from SYS_IOCTL.")
+	}
+	return nil
+}
+
+func openInternal(options OpenOptions) (Serial, error) {
 
 	file, openErr :=
 		os.OpenFile(
@@ -154,18 +164,9 @@ func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
 		return nil, optErr
 	}
 
-	r, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		uintptr(file.Fd()),
-		uintptr(kTCSETS2),
-		uintptr(unsafe.Pointer(t2)))
-
-	if errno != 0 {
-		return nil, os.NewSyscallError("SYS_IOCTL", errno)
-	}
-
-	if r != 0 {
-		return nil, errors.New("unknown error from SYS_IOCTL")
+	err := ioctl(uintptr(file.Fd()), kTCSETS2, unsafe.Pointer(t2))
+	if err != nil {
+		return nil, err
 	}
 
 	if options.Rs485Enable {
@@ -199,5 +200,53 @@ func openInternal(options OpenOptions) (io.ReadWriteCloser, error) {
 		}
 	}
 
-	return file, nil
+	return &serialPort{file: file}, nil
+}
+
+func (s *serialPort) Read(buf []byte) (int, error) {
+	return s.file.Read(buf)
+}
+
+func (s *serialPort) Write(buf []byte) (int, error) {
+	return s.file.Write(buf)
+}
+
+func (s *serialPort) Close() error {
+	return s.file.Close()
+}
+
+func (s *serialPort) SetBaudRate(baudRate uint) error {
+	var t2 termios2
+	err := ioctl(uintptr(s.file.Fd()), kTCGETS2, unsafe.Pointer(&t2))
+	if err != nil {
+		return err
+	}
+	t2.c_cflag = ((t2.c_cflag &^ kCBAUD) | kBOTHER)
+	t2.c_ispeed = speed_t(baudRate)
+	t2.c_ospeed = speed_t(baudRate)
+	err = ioctl(uintptr(s.file.Fd()), kTCSETS2, unsafe.Pointer(&t2))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *serialPort) SetReadTimeout(timeout time.Duration) error {
+	vtime, vmin, err := timeoutSettings(timeout, 0)
+	if err != nil {
+		return err
+	}
+
+	var t2 termios2
+	err = ioctl(uintptr(s.file.Fd()), kTCGETS2, unsafe.Pointer(&t2))
+	if err != nil {
+		return err
+	}
+	t2.c_cc[syscall.VTIME] = vtime
+	t2.c_cc[syscall.VMIN] = vmin
+	err = ioctl(uintptr(s.file.Fd()), kTCSETS2, unsafe.Pointer(&t2))
+	if err != nil {
+		return err
+	}
+	return nil
 }
