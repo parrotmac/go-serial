@@ -43,6 +43,17 @@ func (s *serialPort) SetDTR(active bool) error {
 	return s.setModemControl(syscall.TIOCM_DTR, active)
 }
 
+func (s *serialPort) SetBreak(active bool) error {
+	var call uintptr
+	switch active {
+	case true:
+		call = syscall.TIOCSBRK
+	case false:
+		call = syscall.TIOCCBRK
+	}
+	return ioctl(s.file.Fd(), call, 0)
+}
+
 func timeoutSettings(ict time.Duration, mrs uint) (cc_t, cc_t, error) {
 	// Sanity check inter-character timeout and minimum read size options.
 
