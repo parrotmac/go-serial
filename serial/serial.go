@@ -126,6 +126,7 @@ type Serial interface {
 	SetReadTimeout(timeout time.Duration) error
 	SetRTS(active bool) error
 	SetDTR(active bool) error
+	SetBreak(active bool) error
 }
 
 // Open creates an Serial based on the supplied options struct.

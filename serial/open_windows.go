@@ -200,17 +200,31 @@ func (s *serialPort) SetDTR(active bool) error {
 	}
 }
 
+func (s *serialPort) SetBreak(active bool) error {
+	call := nClearCommBreak
+	if active {
+		call = nSetCommBreak
+	}
+	r, _, err := syscall.Syscall(call, 1, uintptr(s.fd), 0, 0)
+	if r == 0 {
+		return err
+	}
+	return nil
+}
+
 var (
-	nSetCommState,
-	nSetCommTimeouts,
-	nSetCommMask,
-	nSetupComm,
+	nClearCommBreak,
+	nCreateEvent,
+	nEscapeCommFunction,
 	nGetCommState,
 	nGetOverlappedResult,
-	nEscapeCommFunction,
 	nPurgeComm,
-	nCreateEvent,
-	nResetEvent uintptr
+	nResetEvent,
+	nSetCommBreak,
+	nSetCommMask,
+	nSetCommState,
+	nSetCommTimeouts,
+	nSetupComm uintptr
 )
 
 func init() {
@@ -220,16 +234,18 @@ func init() {
 	}
 	defer syscall.FreeLibrary(k32)
 
+	nClearCommBreak = getProcAddr(k32, "ClearCommBreak")
+	nCreateEvent = getProcAddr(k32, "CreateEventW")
+	nEscapeCommFunction = getProcAddr(k32, "EscapeCommFunction")
 	nGetCommState = getProcAddr(k32, "GetCommState")
+	nGetOverlappedResult = getProcAddr(k32, "GetOverlappedResult")
+	nPurgeComm = getProcAddr(k32, "PurgeComm")
+	nResetEvent = getProcAddr(k32, "ResetEvent")
+	nSetCommBreak = getProcAddr(k32, "SetCommBreak")
+	nSetCommMask = getProcAddr(k32, "SetCommMask")
 	nSetCommState = getProcAddr(k32, "SetCommState")
 	nSetCommTimeouts = getProcAddr(k32, "SetCommTimeouts")
-	nSetCommMask = getProcAddr(k32, "SetCommMask")
 	nSetupComm = getProcAddr(k32, "SetupComm")
-	nEscapeCommFunction = getProcAddr(k32, "EscapeCommFunction")
-	nPurgeComm = getProcAddr(k32, "PurgeComm")
-	nGetOverlappedResult = getProcAddr(k32, "GetOverlappedResult")
-	nCreateEvent = getProcAddr(k32, "CreateEventW")
-	nResetEvent = getProcAddr(k32, "ResetEvent")
 }
 
 func getProcAddr(lib syscall.Handle, name string) uintptr {
