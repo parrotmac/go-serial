@@ -279,13 +279,16 @@ func (s *serialPort) SetReadTimeout(timeout time.Duration) error {
 	}
 	t.c_cc[kVTIME] = vtime
 	t.c_cc[kVMIN] = vmin
-	// Non-standard baud rate is being used, setting will fail. We need to re-apply it separately.
-	// This will result in momentary change of baud rate, but there seems to be no way to do it transactionally.
 	setSpeed := false
 	if t.c_ispeed > 230400 {
+		// Non-standard baud rate is being used, setting will fail. We need to re-apply it separately.
+		// This will result in momentary change of baud rate, but there seems to be no way to do it transactionally.
+		// There may be data being transmitted at the moment and we want it to go out at the correct baud rate,
+		// so we sleep for a while. This is incredibly dumb, but alas...
 		t.c_ispeed = kDefaultBaudRate
 		t.c_ospeed = kDefaultBaudRate
 		setSpeed = true
+		time.Sleep(10 * time.Millisecond)
 	}
 	err = setTermios(s.file.Fd(), t)
 	if setSpeed {
