@@ -297,10 +297,10 @@ func setCommTimeouts(h syscall.Handle, ict time.Duration, mrs uint) error {
 		timeouts.ReadTotalTimeoutMultiplier = MAXDWORD
 		timeouts.ReadTotalTimeoutConstant = intervalTimeoutMs
 	} else if mrs > 0 {
-		// Blocking mode.
-		timeouts.ReadIntervalTimeout = 0
+		// Blocking mode - wait essentially forever or until data arrives.
+		timeouts.ReadIntervalTimeout = 1
 		timeouts.ReadTotalTimeoutMultiplier = 0
-		timeouts.ReadTotalTimeoutConstant = 0
+		timeouts.ReadTotalTimeoutConstant = MAXDWORD - 1
 	} else {
 		// Non-blocking mode.
 		timeouts.ReadIntervalTimeout = MAXDWORD
