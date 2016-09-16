@@ -16,6 +16,7 @@ package serial
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -136,7 +137,11 @@ func (p *serialPort) Read(buf []byte) (int, error) {
 	if err != nil && err != syscall.ERROR_IO_PENDING {
 		return int(done), err
 	}
-	return getOverlappedResult(p.fd, p.ro)
+	n, err := getOverlappedResult(p.fd, p.ro)
+	if n == 0 && err == nil {
+		return 0, io.EOF
+	}
+	return n, err
 }
 
 const PURGE_RXCLEAR = 0x8
