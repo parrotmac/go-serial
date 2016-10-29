@@ -95,6 +95,12 @@ func ioctl(fd, request, arg uintptr) error {
 		return errors.New("Unknown error from SYS_IOCTL.")
 	}
 
+	// This is a workaround for CH340G driver, which seems to not wait for
+	// USB_CONTROL calls to finish before returning. As a result, they may
+	// interleave with subsequent data transfers, which can wreak all sorts
+	// of havoc, changing baud rate and resetting FIFOs and whatnot.
+	time.Sleep(5 * time.Millisecond)
+
 	return nil
 }
 
