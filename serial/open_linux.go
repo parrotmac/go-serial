@@ -28,6 +28,7 @@ const (
 	kTCSETS2  = 0x402C542B
 	kCBAUD    = 0x100f
 	kBOTHER   = 0x1000
+	kCRTSCTS  = 0x2000
 	kNCCS     = 19
 	kTCFLSH   = 0x540b
 	kTCIFLUSH = 0
@@ -128,6 +129,10 @@ func makeTermios2(options OpenOptions) (*termios2, error) {
 		t2.c_cflag |= syscall.CS8
 	default:
 		return nil, errors.New("invalid setting for DataBits")
+	}
+
+	if options.HardwareFlowControl {
+		t2.c_cflag |= kCRTSCTS
 	}
 
 	return t2, nil
