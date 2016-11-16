@@ -99,6 +99,9 @@ type OpenOptions struct {
 	InterCharacterTimeout uint
 	MinimumReadSize       uint
 
+	// Enable hardware flow control (CTS/RTS).
+	HardwareFlowControl bool
+
 	// Use to enable RS485 mode -- probably only valid on some Linux platforms
 	Rs485Enable bool
 
