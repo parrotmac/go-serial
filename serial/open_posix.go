@@ -43,6 +43,17 @@ func (s *serialPort) SetDTR(active bool) error {
 	return s.setModemControl(syscall.TIOCM_DTR, active)
 }
 
+func (s *serialPort) SetRTSDTR(rtsActive, dtrActive bool) error {
+	var bits uintptr
+	if rtsActive {
+		bits |= syscall.TIOCM_RTS
+	}
+	if dtrActive {
+		bits |= syscall.TIOCM_DTR
+	}
+	return ioctlp(s.file.Fd(), syscall.TIOCMSET, unsafe.Pointer(&bits))
+}
+
 func (s *serialPort) SetBreak(active bool) error {
 	var call uintptr
 	switch active {

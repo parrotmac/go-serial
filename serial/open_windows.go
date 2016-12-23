@@ -205,6 +205,13 @@ func (s *serialPort) SetDTR(active bool) error {
 	}
 }
 
+func (s *serialPort) SetRTSDTR(rtsActive, dtrActive bool) error {
+	// Windows doesn't have a function to flip RTS and DTR atomically.
+	s.SetDTR(dtrActive)
+	s.SetRTS(rtsActive)
+	return nil
+}
+
 func (s *serialPort) SetBreak(active bool) error {
 	call := nClearCommBreak
 	if active {

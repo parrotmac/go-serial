@@ -129,6 +129,7 @@ type Serial interface {
 	SetReadTimeout(timeout time.Duration) error
 	SetRTS(active bool) error
 	SetDTR(active bool) error
+	SetRTSDTR(rtsActive, dtrActive bool) error
 	SetBreak(active bool) error
 }
 
