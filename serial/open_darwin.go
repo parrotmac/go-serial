@@ -27,11 +27,11 @@ package serial
 
 import (
 	"errors"
+	"os"
+	"syscall"
 	"time"
+	"unsafe"
 )
-import "os"
-import "syscall"
-import "unsafe"
 
 // termios types
 type cc_t byte
@@ -213,6 +213,7 @@ func openInternal(options OpenOptions) (Serial, error) {
 	if err != nil {
 		return nil, err
 	}
+	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 
 	// We want to do blocking I/O, so clear the non-blocking flag set above.
 	r1, _, errno :=

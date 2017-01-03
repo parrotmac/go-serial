@@ -159,6 +159,7 @@ func openInternal(options OpenOptions) (Serial, error) {
 	if openErr != nil {
 		return nil, openErr
 	}
+	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 
 	// Clear the non-blocking flag set above.
 	nonblockErr := syscall.SetNonblock(int(file.Fd()), false)
