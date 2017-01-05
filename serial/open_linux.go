@@ -154,7 +154,7 @@ func openInternal(options OpenOptions) (Serial, error) {
 	file, openErr :=
 		os.OpenFile(
 			options.PortName,
-			syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK|syscall.O_EXCL|syscall.O_EXLOCK,
+			syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK|syscall.O_EXCL,
 			0600)
 	if openErr != nil {
 		return nil, openErr
