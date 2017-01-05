@@ -154,12 +154,11 @@ func openInternal(options OpenOptions) (Serial, error) {
 	file, openErr :=
 		os.OpenFile(
 			options.PortName,
-			syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK,
+			syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK|syscall.O_EXCL|syscall.O_EXLOCK,
 			0600)
 	if openErr != nil {
 		return nil, openErr
 	}
-	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 
 	// Clear the non-blocking flag set above.
 	nonblockErr := syscall.SetNonblock(int(file.Fd()), false)
